@@ -1,0 +1,167 @@
+PROJECT: StickPathfinder
+=======================
+A real-time computer vision project using Python and OpenCV that tracks the tip
+of a drumstick. A small bright-colored tape marker is placed on the shaft just
+below the tip. The program uses color detection in HSV color space to find the
+marker each frame and draw a trajectory trail.
+
+TEACHING STYLE
+--------------
+Teach the user libraries and syntax from scratch. Explain WHY each concept
+exists, not just what it does. After explaining a component, have the user
+write it themselves, then review their code before moving on.
+
+ENVIRONMENT
+-----------
+- OS: Windows 10
+- Shell: bash (Git Bash)
+- Python virtual environment: .venv (already activated via VS Code or terminal)
+- Installed packages: opencv-python 4.13, numpy 2.4
+- Editor: VS Code (assumed)
+
+PROJECT STRUCTURE
+-----------------
+StickPathfinder/
+├── src/
+│   ├── video.py      <- DONE (see below)
+│   ├── tracker.py    <- NEXT
+│   ├── utils.py      <- NOT STARTED
+│   └── main.py       <- NOT STARTED
+├── testing/
+│   └── helloworld.py <- existing OpenCV smoke test (creates a black PNG with text)
+├── data/             <- for saving output videos/logs (empty)
+├── assets/           <- empty
+├── notebook/         <- empty
+└── prompt.txt        <- this file
+
+WHAT HAS BEEN COMPLETED
+------------------------
+1. Explained the two core libraries:
+   - NumPy: images are 3D arrays of shape (height, width, 3), dtype uint8, BGR order
+   - OpenCV (cv2): camera capture, color space conversion, drawing, display
+
+2. Explained HSV color space and WHY it is used over BGR for color detection:
+   - BGR makes consistent color ranges hard because brightness shifts all 3 values
+   - HSV separates color (H), vividness (S), and brightness (V)
+   - Lets you write a stable color range regardless of lighting conditions
+   - H: 0-179 in OpenCV (half of 360 degree wheel)
+   - S: 0-255 (0=gray, 255=pure color)
+   - V: 0-255 (0=black, 255=bright)
+
+3. Explained cv2.VideoCapture:
+   - VideoCapture(0) opens default webcam, can pass int or file path string
+   - cap.isOpened() returns bool, must check before using
+   - cap.read() returns (ret, frame) tuple -- taught tuple unpacking
+   - ret is bool (True=frame grabbed, False=stream ended/error)
+   - frame is NumPy array (height, width, 3) in BGR, or None if ret is False
+   - cap.release() frees the camera resource
+   - cv2.destroyAllWindows() closes all OpenCV display windows
+
+4. Explained cv2.imshow / cv2.waitKey loop:
+   - imshow("window name", frame) renders a frame to a named window
+   - waitKey(n) waits n ms for keypress, returns key code integer or -1
+   - waitKey(1) keeps the loop fast but still processes GUI events (required for imshow to render)
+   - waitKey(0) waits indefinitely (for static images)
+   - & 0xFF masks the return value to 8 bits for cross-platform safety
+   - ord('q') converts character to ASCII integer (113)
+   - Full idiom: if cv2.waitKey(1) & 0xFF == ord('q'): break
+
+5. Explained __name__ == "__main__" guard:
+   - When a file is run directly, __name__ == "__main__"
+   - When a file is imported, __name__ == the module name
+   - Wrapping script code in this guard prevents it from running on import
+
+COMPLETED FILE: src/video.py
+-----------------------------
+The user wrote this themselves. It is a script-style (not class-based) camera
+loop. It works correctly. It was noted that a __name__ == "__main__" guard
+should be added before we integrate it into main.py, to prevent the loop from
+running on import. A class-based version (VideoStream) was described but not
+yet written -- the user may choose to refactor or keep it as a guarded script.
+
+Current contents:
+    import cv2
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Camera not found.")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        cv2.imshow("Feed", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+NEXT COMPONENT: src/tracker.py
+--------------------------------
+This is the core logic file. Teach the following concepts in order:
+
+1. cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+   - Converts a BGR frame to HSV
+   - Result is same shape (H, W, 3) but values now represent H, S, V
+
+2. cv2.inRange(hsv, lower_bound, upper_bound)
+   - lower_bound and upper_bound are NumPy arrays: np.array([H, S, V])
+   - Returns a binary mask -- same H x W shape, but single channel
+   - Pixels within range = 255 (white), outside = 0 (black)
+   - This is the step that isolates the marker color
+
+3. Morphological operations (cleaning the mask):
+   - cv2.erode() -- shrinks white regions, removes small noise dots
+   - cv2.dilate() -- grows white regions back, fills holes
+   - Together: erode then dilate = "opening" -- removes noise without shrinking target
+   - kernel = np.ones((5,5), np.uint8) -- the structuring element
+
+4. cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+   - Finds outlines of white blobs in the binary mask
+   - Returns a list of contours (each contour is an array of (x,y) points)
+   - RETR_EXTERNAL: only outermost contours (ignore holes)
+   - CHAIN_APPROX_SIMPLE: compress straight edges to save memory
+
+5. cv2.contourArea(contour)
+   - Returns the pixel area of a contour
+   - Used to filter out noise: ignore contours below a minimum area threshold
+
+6. cv2.moments(contour)
+   - Returns a dict of shape moments
+   - Centroid: cx = int(M["m10"] / M["m00"]), cy = int(M["m01"] / M["m00"])
+   - This gives the center point of the detected marker blob
+
+The tracker.py file should expose a function like:
+    find_marker(frame, lower_hsv, upper_hsv) -> (cx, cy) or None
+
+AFTER tracker.py: src/utils.py
+--------------------------------
+Drawing helpers:
+- Draw a filled circle at the centroid: cv2.circle()
+- Draw the trajectory trail: maintain a deque of past (cx, cy) points,
+  draw lines between consecutive points with fading thickness or color
+- Overlay text (frame count, FPS, coordinates): cv2.putText()
+- collections.deque with maxlen is the right structure for the trail
+  (automatically drops oldest point when full)
+
+AFTER utils.py: src/main.py
+-----------------------------
+Entry point. Ties everything together:
+- Instantiate VideoStream (or use the guarded script approach)
+- Define HSV color bounds for the chosen tape color
+- Loop: read frame -> find_marker -> if found, update trail -> draw -> imshow
+- Handle quit key
+- release/destroyAllWindows on exit
+
+COLOR CALIBRATION NOTE (to address when writing main.py)
+---------------------------------------------------------
+The user will need to tune the HSV bounds for their specific tape color.
+Suggest building a simple calibration helper: a trackbar window using
+cv2.createTrackbar() that lets them adjust H/S/V min and max live and see
+the mask update in real time. This can live in testing/ as a standalone script.
+
+Common tape colors and approximate HSV ranges in OpenCV scale:
+- Bright green:  lower=(40, 100, 100)  upper=(80, 255, 255)
+- Bright orange: lower=(5, 150, 150)   upper=(20, 255, 255)
+- Bright pink:   lower=(140, 100, 100) upper=(170, 255, 255)
+- Bright yellow: lower=(20, 100, 100)  upper=(35, 255, 255)
+Note: red wraps around 0/179 in OpenCV and requires TWO inRange calls combined
+with cv2.bitwise_or() -- worth mentioning if the user picks red tape.
